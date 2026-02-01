@@ -1,0 +1,66 @@
+.users-page .admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.users-page .filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.users-page .filter-select {
+  padding: 8px 12px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.users-table-wrap {
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.users-table th,
+.users-table td {
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.users-table th {
+  background: #f8f9fa;
+  font-weight: 600;
+  color: #333;
+}
+
+.users-table td.empty-cell {
+  text-align: center;
+  color: #666;
+  padding: 40px;
+}
+
+.role-badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.role-badge.role-admin { background: #667eea; color: white; }
+.role-badge.role-owner { background: #764ba2; color: white; }
+.role-badge.role-manager { background: #5a6268; color: white; }
+.role-badge.role-employee { background: #e2e3e5; color: #383d41; }
+.role-badge.role-cashier { background: #d4edda; color: #155724; }
+.role-badge.role-kitchen { background: #fff3cd; color: #856404; }
