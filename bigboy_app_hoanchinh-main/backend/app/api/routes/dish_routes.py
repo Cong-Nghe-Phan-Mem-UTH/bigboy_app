@@ -9,7 +9,6 @@ from flask import g
 
 dish_bp = Blueprint("dish", __name__)
 
-
 @dish_bp.route("", methods=["GET"])
 def get_dishes():
     """Get list of dishes"""
