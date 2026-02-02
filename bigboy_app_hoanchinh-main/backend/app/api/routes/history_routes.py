@@ -61,6 +61,7 @@ def verify_customer_token():
         return None, "Invalid token"
 
 
+
 @history_bp.route("/history", methods=["GET"])
 def get_customer_history():
     """Get customer history (dishes, restaurants, total spending)"""
