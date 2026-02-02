@@ -1,163 +1,138 @@
 """
-Guest routes - QR Menu
+Dish routes
 """
 from flask import Blueprint, request, jsonify
 from app.infrastructure.databases import get_session
-from app.models.guest_model import GuestModel
-from app.models.table_model import TableModel
-from app.models.order_model import OrderModel, OrderStatus
-from app.models.dish_model import DishModel, DishSnapshotModel
-from app.utils.jwt import create_access_token, create_refresh_token
-from app.config import Config
-from datetime import datetime, timedelta
+from app.models.dish_model import DishModel, DishStatus
+from app.api.decorators import require_employee
+from flask import g
 
-guest_bp = Blueprint("guest", __name__)
+dish_bp = Blueprint("dish", __name__)
 
-
-@guest_bp.route("/auth/login", methods=["POST"])
-def guest_login():
-    """Guest login via QR code token"""
-    data = request.get_json()
-    if not data:
-        return jsonify({"message": "Invalid request"}), 400
+@dish_bp.route("", methods=["GET"])
+def get_dishes():
+    """Get list of dishes"""
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 50, type=int)
+    category = request.args.get('category')
+    status = request.args.get('status')
+    tenant_id = request.args.get('tenant_id', type=int) or request.args.get('restaurant_id', type=int)
     
     session = get_session()
     try:
-        # Find table by token
-        table = session.query(TableModel).filter(
-            TableModel.token == data.get('table_token')
-        ).first()
+        query = session.query(DishModel)
         
-        if not table:
-            return jsonify({"message": "Invalid QR code"}), 404
+        if tenant_id:
+            query = query.filter(DishModel.tenant_id == tenant_id)
         
-        # Create or get guest
-        guest = session.query(GuestModel).filter(
-            GuestModel.table_number == table.number,
-            GuestModel.tenant_id == table.tenant_id
-        ).first()
+        if category:
+            query = query.filter(DishModel.category == category)
         
-        if not guest:
-            guest = GuestModel(
-                name=data.get('name', 'Guest'),
-                tenant_id=table.tenant_id,
-                table_number=table.number
-            )
-            session.add(guest)
-            session.flush()
+        if status:
+            status_str = str(status).strip()
+            if status_str.lower() == "available":
+                query = query.filter(DishModel.status == DishStatus.AVAILABLE)
+            else:
+                try:
+                    query = query.filter(DishModel.status == DishStatus(status_str))
+                except (ValueError, TypeError):
+                    pass
         
-        # Create tokens
-        token_data = {
-            "sub": str(guest.id),  # JWT requires 'sub' to be a string
-            "role": "Guest",
-            "tenant_id": guest.tenant_id
-        }
-        access_token = create_access_token(token_data, is_guest=True)
-        refresh_token = create_refresh_token(token_data, is_guest=True)
-        
-        # Save refresh token
-        guest.refresh_token = refresh_token
-        guest.refresh_token_expires_at = datetime.utcnow() + timedelta(
-            seconds=Config.GUEST_REFRESH_TOKEN_EXPIRES_IN
-        )
-        
-        session.commit()
-        session.refresh(guest)
+        total = query.count()
+        dishes = query.offset((page - 1) * limit).limit(limit).all()
         
         return jsonify({
             "data": {
-                "access_token": access_token,
-                "refresh_token": refresh_token,
-                "token_type": "bearer",
-                "guest_id": guest.id,
-                "table_number": guest.table_number
+                "items": [{
+                    "id": d.id,
+                    "tenant_id": d.tenant_id,
+                    "name": d.name,
+                    "price": d.price,
+                    "description": d.description,
+                    "image": d.image,
+                    "category": d.category,
+                    "status": d.status.value,
+                    "created_at": d.created_at.isoformat() if d.created_at else None,
+                    "updated_at": d.updated_at.isoformat() if d.updated_at else None
+                } for d in dishes],
+                "total": total,
+                "page": page,
+                "limit": limit
             },
-            "message": "Đăng nhập thành công!"
+            "message": "Lấy danh sách món ăn thành công!"
         }), 200
-    except Exception as e:
-        session.rollback()
-        return jsonify({"message": str(e)}), 500
     finally:
         session.close()
 
 
-@guest_bp.route("/orders", methods=["POST"])
-def create_guest_orders():
-    """Create orders from guest"""
+@dish_bp.route("/<int:dish_id>", methods=["GET"])
+def get_dish(dish_id):
+    """Get dish by ID"""
+    session = get_session()
+    try:
+        dish = session.query(DishModel).filter(DishModel.id == dish_id).first()
+        
+        if not dish:
+            return jsonify({"message": "Dish not found"}), 404
+        
+        return jsonify({
+            "data": {
+                "id": dish.id,
+                "tenant_id": dish.tenant_id,
+                "name": dish.name,
+                "price": dish.price,
+                "description": dish.description,
+                "image": dish.image,
+                "category": dish.category,
+                "status": dish.status.value,
+                "created_at": dish.created_at.isoformat() if dish.created_at else None,
+                "updated_at": dish.updated_at.isoformat() if dish.updated_at else None
+            },
+            "message": "Lấy thông tin món ăn thành công!"
+        }), 200
+    finally:
+        session.close()
+
+
+@dish_bp.route("", methods=["POST"])
+@require_employee
+def create_dish():
+    """Create a new dish"""
     data = request.get_json()
     if not data:
         return jsonify({"message": "Invalid request"}), 400
     
-    # Get guest_id from token (should be in Authorization header)
-    auth_header = request.headers.get('Authorization')
-    if not auth_header:
-        return jsonify({"message": "Authorization required"}), 401
-    
-    try:
-        token = auth_header.split(' ')[1]
-        from app.utils.jwt import verify_access_token
-        payload = verify_access_token(token)
-        
-        if not payload or payload.get('role') != 'Guest':
-            return jsonify({"message": "Invalid guest token"}), 401
-        
-        guest_id = payload.get('sub')
-        tenant_id = payload.get('tenant_id')
-    except:
-        return jsonify({"message": "Invalid token"}), 401
+    if not g.current_user.tenant_id:
+        return jsonify({"message": "User must belong to a tenant"}), 403
     
     session = get_session()
     try:
-        orders = []
-        table_number = data.get('table_number')
+        dish = DishModel(
+            tenant_id=g.current_user.tenant_id,
+            name=data.get('name'),
+            price=data.get('price'),
+            description=data.get('description'),
+            image=data.get('image'),
+            category=data.get('category'),
+            status=DishStatus(data.get('status', 'Available'))
+        )
         
-        for order_data in data.get('orders', []):
-            # Get dish
-            dish = session.query(DishModel).filter(
-                DishModel.id == order_data.get('dish_id'),
-                DishModel.tenant_id == tenant_id
-            ).first()
-            
-            if not dish:
-                return jsonify({"message": f"Dish {order_data.get('dish_id')} not found"}), 404
-            
-            # Create dish snapshot
-            dish_snapshot = DishSnapshotModel(
-                dish_id=dish.id,
-                name=dish.name,
-                price=dish.price,
-                description=dish.description,
-                image=dish.image,
-                category=dish.category,
-                status=dish.status.value
-            )
-            session.add(dish_snapshot)
-            session.flush()
-            
-            # Create order
-            order = OrderModel(
-                tenant_id=tenant_id,
-                guest_id=guest_id,
-                table_number=table_number,
-                dish_snapshot_id=dish_snapshot.id,
-                quantity=order_data.get('quantity', 1),
-                notes=order_data.get('notes'),
-                status=OrderStatus.PENDING
-            )
-            session.add(order)
-            orders.append(order)
-        
+        session.add(dish)
         session.commit()
+        session.refresh(dish)
         
         return jsonify({
-            "data": [{
-                "id": o.id,
-                "dish_snapshot_id": o.dish_snapshot_id,
-                "quantity": o.quantity,
-                "notes": o.notes,
-                "status": o.status.value
-            } for o in orders],
-            "message": f"Đặt món thành công {len(orders)} món!"
+            "data": {
+                "id": dish.id,
+                "tenant_id": dish.tenant_id,
+                "name": dish.name,
+                "price": dish.price,
+                "description": dish.description,
+                "image": dish.image,
+                "category": dish.category,
+                "status": dish.status.value
+            },
+            "message": "Tạo món ăn thành công!"
         }), 201
     except Exception as e:
         session.rollback()
@@ -166,46 +141,84 @@ def create_guest_orders():
         session.close()
 
 
-@guest_bp.route("/orders", methods=["GET"])
-def get_guest_orders():
-    """Get guest orders"""
-    auth_header = request.headers.get('Authorization')
-    if not auth_header:
-        return jsonify({"message": "Authorization required"}), 401
-    
-    try:
-        token = auth_header.split(' ')[1]
-        from app.utils.jwt import verify_access_token
-        payload = verify_access_token(token)
-        
-        if not payload or payload.get('role') != 'Guest':
-            return jsonify({"message": "Invalid guest token"}), 401
-        
-        guest_id = payload.get('sub')
-    except:
-        return jsonify({"message": "Invalid token"}), 401
+@dish_bp.route("/<int:dish_id>", methods=["PUT"])
+@require_employee
+def update_dish(dish_id):
+    """Update a dish"""
+    data = request.get_json()
+    if not data:
+        return jsonify({"message": "Invalid request"}), 400
     
     session = get_session()
     try:
-        orders = session.query(OrderModel).filter(
-            OrderModel.guest_id == guest_id
-        ).order_by(OrderModel.created_at.desc()).all()
+        dish = session.query(DishModel).filter(DishModel.id == dish_id).first()
+        
+        if not dish:
+            return jsonify({"message": "Dish not found"}), 404
+        
+        # Check tenant access
+        if dish.tenant_id != g.current_user.tenant_id:
+            return jsonify({"message": "Access denied"}), 403
+        
+        # Update fields
+        if 'name' in data:
+            dish.name = data['name']
+        if 'price' in data:
+            dish.price = data['price']
+        if 'description' in data:
+            dish.description = data['description']
+        if 'image' in data:
+            dish.image = data['image']
+        if 'category' in data:
+            dish.category = data['category']
+        if 'status' in data:
+            dish.status = DishStatus(data['status'])
+        
+        session.commit()
+        session.refresh(dish)
         
         return jsonify({
             "data": {
-                "items": [{
-                    "id": o.id,
-                    "table_number": o.table_number,
-                    "dish_snapshot_id": o.dish_snapshot_id,
-                    "quantity": o.quantity,
-                    "notes": o.notes,
-                    "status": o.status.value,
-                    "created_at": o.created_at.isoformat() if o.created_at else None
-                } for o in orders],
-                "total": len(orders)
+                "id": dish.id,
+                "tenant_id": dish.tenant_id,
+                "name": dish.name,
+                "price": dish.price,
+                "description": dish.description,
+                "image": dish.image,
+                "category": dish.category,
+                "status": dish.status.value
             },
-            "message": "Lấy lịch sử đặt món thành công!"
+            "message": "Cập nhật món ăn thành công!"
         }), 200
+    except Exception as e:
+        session.rollback()
+        return jsonify({"message": str(e)}), 500
+    finally:
+        session.close()
+
+
+@dish_bp.route("/<int:dish_id>", methods=["DELETE"])
+@require_employee
+def delete_dish(dish_id):
+    """Delete a dish"""
+    session = get_session()
+    try:
+        dish = session.query(DishModel).filter(DishModel.id == dish_id).first()
+        
+        if not dish:
+            return jsonify({"message": "Dish not found"}), 404
+        
+        # Check tenant access
+        if dish.tenant_id != g.current_user.tenant_id:
+            return jsonify({"message": "Access denied"}), 403
+        
+        session.delete(dish)
+        session.commit()
+        
+        return jsonify({"message": "Xóa món ăn thành công!"}), 200
+    except Exception as e:
+        session.rollback()
+        return jsonify({"message": str(e)}), 500
     finally:
         session.close()
 
