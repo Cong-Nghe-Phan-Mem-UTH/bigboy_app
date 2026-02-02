@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 customer_bp = Blueprint("customer", __name__)
 
-
 def verify_customer_token():
     """Helper to verify customer token and return customer_id"""
     auth_header = request.headers.get('Authorization')
