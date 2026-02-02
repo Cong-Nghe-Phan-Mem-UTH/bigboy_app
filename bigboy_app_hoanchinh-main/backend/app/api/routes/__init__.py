@@ -1,6 +1,7 @@
 """
 Routes package - Register all blueprints
 """
+
 from app.api.routes.auth_routes import auth_bp
 from app.api.routes.dish_routes import dish_bp
 from app.api.routes.restaurant_routes import restaurant_bp
