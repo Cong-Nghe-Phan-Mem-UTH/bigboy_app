@@ -26,7 +26,6 @@ _DEFAULT_AI_CONFIG = {
     "sort_by": "rating",  # "rating" | "reviews" | "recent"
 }
 
-
 @admin_bp.route("/restaurants", methods=["GET"])
 @require_admin
 def admin_get_restaurants():
